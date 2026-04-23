@@ -5,12 +5,37 @@
   "icon": "media/marketplace-icon.png",
   "version": "1.0.0",
   "publisher": "Pocky",
+  "preview": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PckyDev/Copilot-Annotation.git"
+  },
+  "homepage": "https://github.com/PckyDev/Copilot-Annotation",
+  "bugs": {
+    "url": "https://github.com/PckyDev/Copilot-Annotation/issues"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "copilot",
+    "annotation",
+    "website",
+    "feedback",
+    "review",
+    "preview",
+    "webview",
+    "ui"
+  ],
+  "galleryBanner": {
+    "color": "#1f1f1f",
+    "theme": "dark"
+  },
+  "markdown": "github",
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -40,14 +65,15 @@
   "files": [
     "out",
     "media",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dependencies": {
-    "@fortawesome/fontawesome-free": "^7.2.0",
     "cheerio": "^1.1.2"
   },
   "devDependencies": {
-    "@vscode/vsce": "^3.6.2",
+    "@fortawesome/fontawesome-free": "^7.2.0",
+    "@vscode/vsce": "2.25.0",
     "@types/node": "^22.15.18",
     "@types/vscode": "^1.100.0",
     "typescript": "^5.8.3"
