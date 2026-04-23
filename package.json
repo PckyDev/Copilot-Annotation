@@ -1,0 +1,55 @@
+{
+  "name": "copilot-annotation",
+  "displayName": "Copilot Annotation",
+  "description": "Turn visual annotations into powerful context that GitHub Copilot can understand more effectively.",
+  "icon": "media/marketplace-icon.png",
+  "version": "1.0.0",
+  "publisher": "Pocky",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "copilotAnnotation.openPreview",
+        "title": "Copilot Annotation: Open Website Preview"
+      }
+    ],
+    "configuration": {
+      "title": "Copilot Annotation",
+      "properties": {
+        "copilotAnnotation.defaultUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:3000",
+          "description": "Default URL used when opening the annotation preview."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "prepare:assets": "node ./scripts/copy-fontawesome-assets.mjs",
+    "vscode:prepublish": "npm run prepare:assets && npm run compile",
+    "compile": "tsc -p ./",
+    "package": "npm run prepare:assets && npx @vscode/vsce package",
+    "watch": "tsc -watch -p ./"
+  },
+  "files": [
+    "out",
+    "media",
+    "README.md"
+  ],
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.2.0",
+    "cheerio": "^1.1.2"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.6.2",
+    "@types/node": "^22.15.18",
+    "@types/vscode": "^1.100.0",
+    "typescript": "^5.8.3"
+  }
+}
