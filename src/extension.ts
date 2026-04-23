@@ -76,71 +76,85 @@ let currentLocalPreviewWatcher: vscode.FileSystemWatcher | undefined;
 let scheduledPreviewReload: ReturnType<typeof setTimeout> | undefined;
 let isReloadingPreview = false;
 let queuedPreviewReload = false;
+let currentServer: AnnotationProxyServer | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const server = new AnnotationProxyServer(context.extensionUri.fsPath);
-  await server.ensureStarted();
-
-  context.subscriptions.push(server);
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(() => {
-      if (shouldAutoReloadOnWorkspaceMutation()) {
-        schedulePreviewReload(server);
+      if (shouldAutoReloadOnWorkspaceMutation() && currentServer) {
+        schedulePreviewReload(currentServer);
       }
     }),
     vscode.workspace.onDidCreateFiles(() => {
-      if (shouldAutoReloadOnWorkspaceMutation()) {
-        schedulePreviewReload(server);
+      if (shouldAutoReloadOnWorkspaceMutation() && currentServer) {
+        schedulePreviewReload(currentServer);
       }
     }),
     vscode.workspace.onDidDeleteFiles(() => {
-      if (shouldAutoReloadOnWorkspaceMutation()) {
-        schedulePreviewReload(server);
+      if (shouldAutoReloadOnWorkspaceMutation() && currentServer) {
+        schedulePreviewReload(currentServer);
       }
     }),
     vscode.workspace.onDidRenameFiles(() => {
-      if (shouldAutoReloadOnWorkspaceMutation()) {
-        schedulePreviewReload(server);
+      if (shouldAutoReloadOnWorkspaceMutation() && currentServer) {
+        schedulePreviewReload(currentServer);
       }
     })
   );
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotAnnotation.openPreview', async () => {
-      const initialTarget = getInitialTarget(context);
-      const enteredUrl = await vscode.window.showInputBox({
-        prompt: 'Enter a website URL or local HTML file path to annotate',
-        placeHolder: 'http://127.0.0.1:3000 or C:\\site\\index.html',
-        value: initialTarget,
-        validateInput: (value) => {
-          try {
-            resolveTargetInput(value);
-            return undefined;
-          } catch {
-            return 'Enter a valid http:// or https:// URL, file:// URI, or an existing local HTML file path.';
+      try {
+        const initialTarget = getInitialTarget(context);
+        const enteredUrl = await vscode.window.showInputBox({
+          prompt: 'Enter a website URL or local HTML file path to annotate',
+          placeHolder: 'http://127.0.0.1:3000 or C:\\site\\index.html',
+          value: initialTarget,
+          validateInput: (value) => {
+            try {
+              resolveTargetInput(value);
+              return undefined;
+            } catch {
+              return 'Enter a valid http:// or https:// URL, file:// URI, or an existing local HTML file path.';
+            }
           }
+        });
+
+        if (!enteredUrl) {
+          return;
         }
-      });
 
-      if (!enteredUrl) {
-        return;
+        const targetUrl = resolveTargetInput(enteredUrl);
+        const server = await getOrCreateServer(context);
+        await context.globalState.update('copilotAnnotation.lastUrl', targetUrl);
+
+        if (!currentPanel) {
+          currentPanel = createPreviewPanel(context, server);
+        }
+
+        await loadPreviewIntoPanel(currentPanel, server, targetUrl);
+        currentPanel.reveal(vscode.ViewColumn.Beside, true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown preview error.';
+        void vscode.window.showErrorMessage(`Copilot Annotation could not open the preview: ${message}`);
       }
-
-      const targetUrl = resolveTargetInput(enteredUrl);
-      await context.globalState.update('copilotAnnotation.lastUrl', targetUrl);
-
-      if (!currentPanel) {
-        currentPanel = createPreviewPanel(context, server);
-      }
-
-      await loadPreviewIntoPanel(currentPanel, server, targetUrl);
-      currentPanel.reveal(vscode.ViewColumn.Beside, true);
     })
   );
 }
 
 export function deactivate(): void {
   resetPreviewTracking();
+  currentServer = undefined;
   currentPanel?.dispose();
+}
+
+async function getOrCreateServer(context: vscode.ExtensionContext): Promise<AnnotationProxyServer> {
+  if (!currentServer) {
+    currentServer = new AnnotationProxyServer(context.extensionUri.fsPath);
+    context.subscriptions.push(currentServer);
+  }
+
+  await currentServer.ensureStarted();
+  return currentServer;
 }
 
 function getInitialTarget(context: vscode.ExtensionContext): string {
