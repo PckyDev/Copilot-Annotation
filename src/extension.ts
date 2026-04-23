@@ -8,7 +8,11 @@ type WebviewMessage =
   | { type: 'openExternal'; url: string }
   | { type: 'openMarkdown'; markdown: string; sourceUrl: string }
   | { type: 'copyMarkdown'; markdown: string }
-  | { type: 'sendToCopilot'; markdown: string; sourceUrl: string };
+  | { type: 'sendToCopilot'; markdown: string; sourceUrl: string }
+  | { type: 'runtimeReady' }
+  | { type: 'status'; text: string }
+  | { type: 'toolbarState'; tool: string; annotationCount: number }
+  | { type: 'navigated'; url: string };
 
 type ExistingChatTarget = {
   kind: 'existing';
@@ -233,6 +237,21 @@ function createPreviewPanel(
         await sendToCopilot(message.markdown, message.sourceUrl, panel);
         return;
       }
+      case 'navigated': {
+        try {
+          const normalizedUrl = resolveTargetInput(message.url);
+          if (currentPanel === panel) {
+            currentPreviewTargetUrl = normalizedUrl;
+            const resolvedTarget = new URL(normalizedUrl);
+            panel.title = `Copilot Annotation: ${getTargetDisplayName(resolvedTarget)}`;
+            configurePreviewWatcher(server, resolvedTarget);
+          }
+          await context.globalState.update('copilotAnnotation.lastUrl', normalizedUrl);
+        } catch {
+          return;
+        }
+        return;
+      }
       default:
         return;
     }
@@ -247,15 +266,92 @@ async function loadPreviewIntoPanel(
   targetUrl: string
 ): Promise<void> {
   const resolvedTarget = new URL(targetUrl);
-  const previewHtml = await server.getPreviewHtml(targetUrl);
+  const previewUrl = await server.getPreviewUrl(targetUrl);
 
   panel.title = `Copilot Annotation: ${getTargetDisplayName(resolvedTarget)}`;
-  panel.webview.html = previewHtml;
+  panel.webview.html = getPreviewShellHtml(previewUrl);
 
-   if (currentPanel === panel) {
+  if (currentPanel === panel) {
     currentPreviewTargetUrl = targetUrl;
     configurePreviewWatcher(server, resolvedTarget);
   }
+}
+
+function getPreviewShellHtml(previewUrl: string): string {
+  const nonce = createNonce();
+  const previewOrigin = new URL(previewUrl).origin;
+
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="en">',
+    '<head>',
+    '  <meta charset="UTF-8">',
+    '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+    `  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${escapeHtmlAttribute(previewOrigin)}; script-src 'nonce-${nonce}'; style-src 'unsafe-inline';">`,
+    '  <style>',
+    '    html, body {',
+    '      margin: 0;',
+    '      padding: 0;',
+    '      width: 100%;',
+    '      height: 100%;',
+    '      overflow: hidden;',
+    '      background: transparent;',
+    '    }',
+    '',
+    '    iframe {',
+    '      width: 100%;',
+    '      height: 100%;',
+    '      border: 0;',
+    '      display: block;',
+    '      background: transparent;',
+    '    }',
+    '  </style>',
+    '</head>',
+    '<body>',
+    `  <iframe id="copilot-annotation-preview-frame" src="${escapeHtmlAttribute(previewUrl)}" referrerpolicy="no-referrer"></iframe>`,
+    `  <script nonce="${nonce}">`,
+    '    const vscode = acquireVsCodeApi();',
+    '    const frame = document.getElementById("copilot-annotation-preview-frame");',
+    `    const previewOrigin = ${JSON.stringify(previewOrigin)};`,
+    '',
+    '    window.addEventListener("message", (event) => {',
+    '      if (frame.contentWindow && event.source === frame.contentWindow) {',
+    '        if (event.origin !== previewOrigin) {',
+    '          return;',
+    '        }',
+    '',
+    '        const message = event.data;',
+    '        if (!message || message.source !== "copilot-annotation-runtime") {',
+    '          return;',
+    '        }',
+    '',
+    '        vscode.postMessage(message);',
+    '        return;',
+    '      }',
+    '',
+    '      if (!frame.contentWindow) {',
+    '        return;',
+    '      }',
+    '',
+    '      frame.contentWindow.postMessage(event.data, previewOrigin);',
+    '    });',
+    '  </script>',
+    '</body>',
+    '</html>'
+  ].join('\n');
+}
+
+function createNonce(): string {
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function shouldAutoReloadOnWorkspaceMutation(): boolean {

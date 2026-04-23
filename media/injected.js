@@ -712,6 +712,7 @@
   function openMarkdownModal() {
     closeModal();
     const markdown = generateMarkdown();
+    const sourceUrl = getCurrentTargetUrl();
 
     const backdrop = document.createElement('div');
     backdrop.className = 'ca-modal-backdrop';
@@ -745,11 +746,11 @@
     modal.querySelector('.ca-modal__close').addEventListener('click', closeModal);
     modal.querySelector('[data-action="close"]').addEventListener('click', closeModal);
     modal.querySelector('[data-action="open"]').addEventListener('click', () => {
-      postToHost('openMarkdown', { markdown, sourceUrl: config.targetUrl });
+      postToHost('openMarkdown', { markdown, sourceUrl });
       showToast('Markdown draft opened in VS Code.');
     });
     modal.querySelector('[data-action="copy"]').addEventListener('click', () => {
-      postToHost('copyMarkdown', { markdown, sourceUrl: config.targetUrl });
+      postToHost('copyMarkdown', { markdown, sourceUrl });
       showToast('Markdown copied in VS Code.');
     });
     modal.querySelector('[data-action="send"]').addEventListener('click', () => {
@@ -805,7 +806,7 @@
 
   function sendMarkdownToHost() {
     const markdown = generateMarkdown();
-    postToHost('sendToCopilot', { markdown, sourceUrl: config.targetUrl });
+    postToHost('sendToCopilot', { markdown, sourceUrl: getCurrentTargetUrl() });
   }
 
   function materializeAnnotation(draft, comment) {
@@ -1112,10 +1113,11 @@
   }
 
   function generateMarkdown() {
+    const currentTargetUrl = getCurrentTargetUrl();
     const lines = [
       '# Copilot Annotation Feedback',
       '',
-      `**Page**: ${config.targetUrl}`,
+      `**Page**: ${currentTargetUrl}`,
       `**Viewport**: ${window.innerWidth}x${window.innerHeight}`,
       ''
     ];
@@ -1188,15 +1190,19 @@
     const originalReplaceState = history.replaceState.bind(history);
 
     history.pushState = function (stateValue, unused, url) {
-      return originalPushState(stateValue, unused, rewriteHistoryUrl(url));
+      const result = originalPushState(stateValue, unused, rewriteHistoryUrl(url));
+      postToHost('navigated', { url: getCurrentTargetUrl() });
+      return result;
     };
 
     history.replaceState = function (stateValue, unused, url) {
-      return originalReplaceState(stateValue, unused, rewriteHistoryUrl(url));
+      const result = originalReplaceState(stateValue, unused, rewriteHistoryUrl(url));
+      postToHost('navigated', { url: getCurrentTargetUrl() });
+      return result;
     };
 
     window.addEventListener('popstate', () => {
-      postToHost('navigated', { url: toTargetUrl(window.location.href) });
+      postToHost('navigated', { url: getCurrentTargetUrl() });
     });
   }
 
@@ -1213,12 +1219,25 @@
       return value;
     }
 
-    const resolved = new URL(value, config.targetUrl);
+    const resolved = new URL(value, getCurrentTargetUrl());
     if (isSameTarget(resolved)) {
       return `${config.proxyOrigin}${resolved.pathname}${resolved.search}${resolved.hash}`;
     }
 
     return resolved.toString();
+  }
+
+  function getCurrentTargetUrl() {
+    try {
+      const current = new URL(window.location.href);
+      if (current.origin === config.proxyOrigin) {
+        return toTargetUrl(current.toString());
+      }
+    } catch {
+      return config.targetUrl;
+    }
+
+    return config.targetUrl;
   }
 
   function toTargetUrl(value) {
