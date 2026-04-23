@@ -3,7 +3,7 @@
   "displayName": "Copilot Annotation",
   "description": "Turn visual annotations into powerful context that GitHub Copilot can understand more effectively.",
   "icon": "media/marketplace-icon.png",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "Pocky",
   "preview": true,
   "license": "MIT",
@@ -62,12 +62,6 @@
     "package": "npm run prepare:assets && npx @vscode/vsce package",
     "watch": "tsc -watch -p ./"
   },
-  "files": [
-    "out",
-    "media",
-    "README.md",
-    "LICENSE"
-  ],
   "dependencies": {
     "cheerio": "^1.1.2"
   },
