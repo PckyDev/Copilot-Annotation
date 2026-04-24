@@ -1,7 +1,9 @@
 import * as nodePath from 'node:path';
-import { existsSync } from 'node:fs';
 import * as vscode from 'vscode';
+import { sendToCopilot } from './copilot/chat';
 import { AnnotationProxyServer } from './proxy/annotationProxyServer';
+import { getPreviewShellHtml } from './preview/shellHtml';
+import { getInitialTarget, getTargetDisplayName, resolveTargetInput, toExternalUri } from './preview/targeting';
 
 type WebviewMessage =
   | { type: 'reloadTarget'; url: string }
@@ -14,66 +16,6 @@ type WebviewMessage =
   | { type: 'toolbarState'; tool: string; annotationCount: number }
   | { type: 'navigated'; url: string };
 
-type ExistingChatTarget = {
-  kind: 'existing';
-  label: string;
-  description: string;
-  groupIndex: number;
-  tabIndex: number;
-};
-
-type NewChatTarget = {
-  kind: 'new';
-  label: string;
-  description: string;
-};
-
-type ChatTarget = ExistingChatTarget | NewChatTarget;
-
-const NEW_CHAT_COMMAND_CANDIDATES = [
-  'vscode.editorChat.start',
-  'workbench.action.chat.open'
-];
-
-const CHAT_INPUT_FOCUS_COMMAND_CANDIDATES = [
-  'workbench.action.chat.focusInput',
-  'workbench.panel.chat.view.copilot.focus'
-];
-
-const CHAT_SUBMIT_COMMAND_CANDIDATES = [
-  'workbench.action.chat.submit',
-  'chat.action.submit',
-  'workbench.action.quickchat.accept'
-];
-
-const PASTE_COMMAND_CANDIDATES = [
-  'paste',
-  'editor.action.clipboardPasteAction'
-];
-
-const FOCUS_EDITOR_GROUP_COMMANDS = [
-  'workbench.action.focusFirstEditorGroup',
-  'workbench.action.focusSecondEditorGroup',
-  'workbench.action.focusThirdEditorGroup',
-  'workbench.action.focusFourthEditorGroup',
-  'workbench.action.focusFifthEditorGroup',
-  'workbench.action.focusSixthEditorGroup',
-  'workbench.action.focusSeventhEditorGroup',
-  'workbench.action.focusEighthEditorGroup'
-];
-
-const OPEN_EDITOR_AT_INDEX_COMMANDS = [
-  'workbench.action.openEditorAtIndex1',
-  'workbench.action.openEditorAtIndex2',
-  'workbench.action.openEditorAtIndex3',
-  'workbench.action.openEditorAtIndex4',
-  'workbench.action.openEditorAtIndex5',
-  'workbench.action.openEditorAtIndex6',
-  'workbench.action.openEditorAtIndex7',
-  'workbench.action.openEditorAtIndex8',
-  'workbench.action.openEditorAtIndex9'
-];
-
 let currentPanel: vscode.WebviewPanel | undefined;
 let currentPreviewTargetUrl: string | undefined;
 let currentLocalPreviewWatcher: vscode.FileSystemWatcher | undefined;
@@ -81,8 +23,10 @@ let scheduledPreviewReload: ReturnType<typeof setTimeout> | undefined;
 let isReloadingPreview = false;
 let queuedPreviewReload = false;
 let currentServer: AnnotationProxyServer | undefined;
+let extensionContext: vscode.ExtensionContext | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  extensionContext = context;
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(() => {
       if (shouldAutoReloadOnWorkspaceMutation() && currentServer) {
@@ -135,7 +79,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           currentPanel = createPreviewPanel(context, server);
         }
 
-        await loadPreviewIntoPanel(currentPanel, server, targetUrl);
+        await loadPreviewIntoPanel(currentPanel, context, server, targetUrl);
         currentPanel.reveal(vscode.ViewColumn.Beside, true);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown preview error.';
@@ -146,6 +90,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
+  extensionContext = undefined;
   resetPreviewTracking();
   currentServer = undefined;
   currentPanel?.dispose();
@@ -161,33 +106,6 @@ async function getOrCreateServer(context: vscode.ExtensionContext): Promise<Anno
   return currentServer;
 }
 
-function getInitialTarget(context: vscode.ExtensionContext): string {
-  const activeHtmlFile = getActiveHtmlFilePath();
-  if (activeHtmlFile) {
-    return activeHtmlFile;
-  }
-
-  const configuration = vscode.workspace.getConfiguration('copilotAnnotation');
-  const configuredUrl = configuration.get<string>('defaultUrl')?.trim();
-  const lastUrl = context.globalState.get<string>('copilotAnnotation.lastUrl')?.trim();
-
-  return lastUrl || configuredUrl || 'http://127.0.0.1:3000';
-}
-
-function getActiveHtmlFilePath(): string | undefined {
-  const document = vscode.window.activeTextEditor?.document;
-  if (!document || document.uri.scheme !== 'file') {
-    return undefined;
-  }
-
-  const extension = nodePath.extname(document.uri.fsPath).toLowerCase();
-  if (!['.html', '.htm'].includes(extension)) {
-    return undefined;
-  }
-
-  return document.uri.fsPath;
-}
-
 function createPreviewPanel(
   context: vscode.ExtensionContext,
   server: AnnotationProxyServer
@@ -201,7 +119,10 @@ function createPreviewPanel(
     },
     {
       enableScripts: true,
-      retainContextWhenHidden: true
+      retainContextWhenHidden: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(context.extensionUri, 'media')
+      ]
     }
   );
 
@@ -217,7 +138,7 @@ function createPreviewPanel(
       case 'reloadTarget': {
         const normalizedUrl = resolveTargetInput(message.url);
         await context.globalState.update('copilotAnnotation.lastUrl', normalizedUrl);
-        await loadPreviewIntoPanel(panel, server, normalizedUrl);
+        await loadPreviewIntoPanel(panel, context, server, normalizedUrl);
         return;
       }
       case 'openExternal': {
@@ -234,7 +155,7 @@ function createPreviewPanel(
         return;
       }
       case 'sendToCopilot': {
-        await sendToCopilot(message.markdown, message.sourceUrl, panel);
+        await sendToCopilot(message.markdown, panel);
         return;
       }
       case 'navigated': {
@@ -262,96 +183,23 @@ function createPreviewPanel(
 
 async function loadPreviewIntoPanel(
   panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
   server: AnnotationProxyServer,
   targetUrl: string
 ): Promise<void> {
   const resolvedTarget = new URL(targetUrl);
   const previewUrl = await server.getPreviewUrl(targetUrl);
+  const fontAwesomeCssUri = panel.webview.asWebviewUri(
+    vscode.Uri.joinPath(context.extensionUri, 'media', 'vendor', 'fontawesome', 'all.min.css')
+  );
 
   panel.title = `Copilot Annotation: ${getTargetDisplayName(resolvedTarget)}`;
-  panel.webview.html = getPreviewShellHtml(previewUrl);
+  panel.webview.html = getPreviewShellHtml(previewUrl, fontAwesomeCssUri.toString(), panel.webview.cspSource);
 
   if (currentPanel === panel) {
     currentPreviewTargetUrl = targetUrl;
     configurePreviewWatcher(server, resolvedTarget);
   }
-}
-
-function getPreviewShellHtml(previewUrl: string): string {
-  const nonce = createNonce();
-  const previewOrigin = new URL(previewUrl).origin;
-
-  return [
-    '<!DOCTYPE html>',
-    '<html lang="en">',
-    '<head>',
-    '  <meta charset="UTF-8">',
-    '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
-    `  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${escapeHtmlAttribute(previewOrigin)}; script-src 'nonce-${nonce}'; style-src 'unsafe-inline';">`,
-    '  <style>',
-    '    html, body {',
-    '      margin: 0;',
-    '      padding: 0;',
-    '      width: 100%;',
-    '      height: 100%;',
-    '      overflow: hidden;',
-    '      background: transparent;',
-    '    }',
-    '',
-    '    iframe {',
-    '      width: 100%;',
-    '      height: 100%;',
-    '      border: 0;',
-    '      display: block;',
-    '      background: transparent;',
-    '    }',
-    '  </style>',
-    '</head>',
-    '<body>',
-    `  <iframe id="copilot-annotation-preview-frame" src="${escapeHtmlAttribute(previewUrl)}" referrerpolicy="no-referrer"></iframe>`,
-    `  <script nonce="${nonce}">`,
-    '    const vscode = acquireVsCodeApi();',
-    '    const frame = document.getElementById("copilot-annotation-preview-frame");',
-    `    const previewOrigin = ${JSON.stringify(previewOrigin)};`,
-    '',
-    '    window.addEventListener("message", (event) => {',
-    '      if (frame.contentWindow && event.source === frame.contentWindow) {',
-    '        if (event.origin !== previewOrigin) {',
-    '          return;',
-    '        }',
-    '',
-    '        const message = event.data;',
-    '        if (!message || message.source !== "copilot-annotation-runtime") {',
-    '          return;',
-    '        }',
-    '',
-    '        vscode.postMessage(message);',
-    '        return;',
-    '      }',
-    '',
-    '      if (!frame.contentWindow) {',
-    '        return;',
-    '      }',
-    '',
-    '      frame.contentWindow.postMessage(event.data, previewOrigin);',
-    '    });',
-    '  </script>',
-    '</body>',
-    '</html>'
-  ].join('\n');
-}
-
-function createNonce(): string {
-  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-}
-
-function escapeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
 
 function shouldAutoReloadOnWorkspaceMutation(): boolean {
@@ -424,7 +272,7 @@ function schedulePreviewReload(server: AnnotationProxyServer): void {
 }
 
 async function reloadCurrentPreview(server: AnnotationProxyServer): Promise<void> {
-  if (!currentPanel || !currentPreviewTargetUrl) {
+  if (!currentPanel || !currentPreviewTargetUrl || !extensionContext) {
     return;
   }
 
@@ -436,7 +284,7 @@ async function reloadCurrentPreview(server: AnnotationProxyServer): Promise<void
   isReloadingPreview = true;
 
   try {
-    await loadPreviewIntoPanel(currentPanel, server, currentPreviewTargetUrl);
+    await loadPreviewIntoPanel(currentPanel, extensionContext, server, currentPreviewTargetUrl);
   } catch (error) {
     console.warn('Copilot Annotation preview auto-reload failed.', error);
   } finally {
@@ -487,274 +335,4 @@ async function openMarkdownDocument(markdown: string, sourceUrl: string): Promis
     preview: false,
     viewColumn: vscode.ViewColumn.Beside
   });
-}
-
-async function sendToCopilot(
-  markdown: string,
-  sourceUrl: string,
-  panel: vscode.WebviewPanel
-): Promise<void> {
-  const prompt = buildCopilotPrompt(markdown);
-
-  try {
-    const availableCommands = new Set(await vscode.commands.getCommands(true));
-    const target = await pickChatTarget();
-    if (!target) {
-      return;
-    }
-
-    await prepareChatTarget(target, availableCommands);
-    await insertPromptIntoChat(prompt, availableCommands);
-    const didSubmit = await executeFirstAvailableCommand(availableCommands, CHAT_SUBMIT_COMMAND_CANDIDATES);
-
-    void panel.webview.postMessage({
-      type: 'copilotAnnotationHostStatus',
-      text: didSubmit
-        ? 'Feedback sent to Copilot Chat.'
-        : 'Feedback inserted into Copilot Chat. Press Enter to send.'
-    });
-  } catch (error) {
-    await vscode.env.clipboard.writeText(prompt);
-
-    const message = error instanceof Error ? error.message : 'Unknown Copilot Chat error.';
-    void vscode.window.showWarningMessage(
-      `Could not send feedback directly to Copilot Chat: ${message}. The prompt was copied to your clipboard instead.`
-    );
-
-    void panel.webview.postMessage({
-      type: 'copilotAnnotationHostStatus',
-      text: 'Direct send failed. Prompt copied to the clipboard for manual paste into Copilot Chat.'
-    });
-  }
-}
-
-function buildCopilotPrompt(markdown: string): string {
-  return [
-    'You are working in the current VS Code workspace on website annotation feedback captured by the user.',
-    'Treat the following markdown as direct implementation instructions for this project.',
-    'Act on the feedback by making the necessary fixes and changes in the codebase where possible instead of only summarizing or suggesting them.',
-    'If something is ambiguous or blocked, ask only the minimum necessary clarifying question and otherwise continue with the implementation work.',
-    '',
-    markdown
-  ].join('\n');
-}
-
-async function pickChatTarget(): Promise<ChatTarget | undefined> {
-  const existingTargets = getOpenChatTargets();
-  const newTarget: NewChatTarget = {
-    kind: 'new',
-    label: 'New Copilot Chat',
-    description: 'Open a new editor chat session'
-  };
-
-  if (existingTargets.length === 0) {
-    return newTarget;
-  }
-
-  if (existingTargets.length === 1) {
-    return existingTargets[0];
-  }
-
-  const selection = await vscode.window.showQuickPick(
-    [
-      ...existingTargets.map((target) => ({
-        label: target.label,
-        description: target.description,
-        target
-      })),
-      {
-        label: newTarget.label,
-        description: newTarget.description,
-        target: newTarget
-      }
-    ],
-    {
-      title: 'Choose a Copilot Chat Session',
-      placeHolder: 'Select the chat session that should receive the feedback'
-    }
-  );
-
-  return selection?.target;
-}
-
-function getOpenChatTargets(): ExistingChatTarget[] {
-  return vscode.window.tabGroups.all.flatMap((group, groupIndex) => group.tabs.flatMap((tab, tabIndex) => {
-    if (!canFocusTab(groupIndex, tabIndex) || !isLikelyChatTab(tab)) {
-      return [];
-    }
-
-    return [{
-      kind: 'existing' as const,
-      label: tab.label,
-      description: `Editor group ${groupIndex + 1}, tab ${tabIndex + 1}`,
-      groupIndex,
-      tabIndex
-    }];
-  }));
-}
-
-function canFocusTab(groupIndex: number, tabIndex: number): boolean {
-  return groupIndex >= 0
-    && groupIndex < FOCUS_EDITOR_GROUP_COMMANDS.length
-    && tabIndex >= 0
-    && tabIndex < OPEN_EDITOR_AT_INDEX_COMMANDS.length;
-}
-
-function isLikelyChatTab(tab: vscode.Tab): boolean {
-  const label = tab.label.trim().toLowerCase();
-  const inputTypeName = getTabInputTypeName(tab.input).toLowerCase();
-
-  return inputTypeName.includes('chat')
-    || label === 'chat'
-    || label.startsWith('chat:')
-    || label.includes('copilot chat');
-}
-
-function getTabInputTypeName(input: unknown): string {
-  if (!input || typeof input !== 'object') {
-    return '';
-  }
-
-  return Object.getPrototypeOf(input)?.constructor?.name ?? '';
-}
-
-async function prepareChatTarget(target: ChatTarget, availableCommands: Set<string>): Promise<void> {
-  if (target.kind === 'new') {
-    const opened = await executeFirstAvailableCommand(availableCommands, NEW_CHAT_COMMAND_CANDIDATES);
-    if (!opened) {
-      throw new Error('This VS Code build does not expose a command for opening Copilot Chat from an extension.');
-    }
-    return;
-  }
-
-  await vscode.commands.executeCommand(FOCUS_EDITOR_GROUP_COMMANDS[target.groupIndex]);
-  await vscode.commands.executeCommand(OPEN_EDITOR_AT_INDEX_COMMANDS[target.tabIndex]);
-}
-
-async function insertPromptIntoChat(prompt: string, availableCommands: Set<string>): Promise<void> {
-  await executeFirstAvailableCommand(availableCommands, CHAT_INPUT_FOCUS_COMMAND_CANDIDATES);
-
-  try {
-    await vscode.commands.executeCommand('type', { text: prompt });
-    return;
-  } catch {
-    await vscode.env.clipboard.writeText(prompt);
-    const pasted = await executeFirstAvailableCommand(availableCommands, PASTE_COMMAND_CANDIDATES);
-    if (!pasted) {
-      throw new Error('VS Code could not insert text into the selected Copilot Chat session.');
-    }
-  }
-}
-
-async function executeFirstAvailableCommand(
-  availableCommands: Set<string>,
-  commandIds: readonly string[]
-): Promise<boolean> {
-  for (const commandId of commandIds) {
-    if (!availableCommands.has(commandId)) {
-      continue;
-    }
-
-    try {
-      await vscode.commands.executeCommand(commandId);
-      return true;
-    } catch {
-      continue;
-    }
-  }
-
-  return false;
-}
-
-function resolveTargetInput(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error('Target is required.');
-  }
-
-  if (/^https?:\/\//i.test(trimmed) || /^file:\/\//i.test(trimmed)) {
-    const resolvedUrl = new URL(trimmed);
-    if (!['http:', 'https:', 'file:'].includes(resolvedUrl.protocol)) {
-      throw new Error('Unsupported protocol.');
-    }
-
-    return resolvedUrl.toString();
-  }
-
-  if (looksLikeLocalPath(trimmed)) {
-    try {
-      return vscode.Uri.file(resolveLocalPath(trimmed)).toString();
-    } catch (error) {
-      if (!looksLikeNetworkTarget(trimmed)) {
-        throw error;
-      }
-    }
-  }
-
-  return new URL(`http://${trimmed}`).toString();
-}
-
-function looksLikeLocalPath(value: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(value)
-    || value.startsWith('\\\\')
-    || value.startsWith('/')
-    || value.startsWith('./')
-    || value.startsWith('../')
-    || value.startsWith('.\\')
-    || value.startsWith('..\\')
-    || value.includes('\\')
-    || value.includes('/')
-    || /\.(html?|xhtml)$/i.test(value);
-}
-
-function looksLikeNetworkTarget(value: string): boolean {
-  return /^(localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i.test(value)
-    || (/^[^\s/\\]+\.[^\s/\\]+(?::\d+)?$/i.test(value) && !/\.(html?|xhtml)$/i.test(value))
-    || /^(?:[^\s/\\]+\.)+[^\s/\\]+(?::\d+)?[/?#].+$/i.test(value);
-}
-
-function resolveLocalPath(inputPath: string): string {
-  const normalizedInput = nodePath.normalize(inputPath);
-  const candidatePaths = new Set<string>();
-
-  if (nodePath.isAbsolute(normalizedInput)) {
-    candidatePaths.add(normalizedInput);
-  } else {
-    const activeFilePath = vscode.window.activeTextEditor?.document.uri.scheme === 'file'
-      ? vscode.window.activeTextEditor.document.uri.fsPath
-      : undefined;
-    const activeDirectory = activeFilePath ? nodePath.dirname(activeFilePath) : undefined;
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-    if (activeDirectory) {
-      candidatePaths.add(nodePath.resolve(activeDirectory, normalizedInput));
-    }
-
-    if (workspaceFolder) {
-      candidatePaths.add(nodePath.resolve(workspaceFolder, normalizedInput));
-    }
-
-    candidatePaths.add(nodePath.resolve(normalizedInput));
-  }
-
-  for (const candidatePath of candidatePaths) {
-    if (existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-
-  throw new Error('Local file does not exist.');
-}
-
-function toExternalUri(targetUrl: string): vscode.Uri {
-  return vscode.Uri.parse(targetUrl);
-}
-
-function getTargetDisplayName(targetUrl: URL): string {
-  if (targetUrl.protocol === 'file:') {
-    const fileName = nodePath.basename(decodeURIComponent(targetUrl.pathname));
-    return fileName || 'Local File';
-  }
-
-  return targetUrl.host;
 }

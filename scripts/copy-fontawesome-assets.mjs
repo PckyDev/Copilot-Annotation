@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,3 +17,7 @@ cpSync(path.join(sourceRoot, 'webfonts'), path.join(targetRoot, 'webfonts'), {
   recursive: true,
   force: true
 });
+
+const copiedCssPath = path.join(targetRoot, 'all.min.css');
+const copiedCss = readFileSync(copiedCssPath, 'utf8').replace(/\.\.\/webfonts\//g, './webfonts/');
+writeFileSync(copiedCssPath, copiedCss, 'utf8');

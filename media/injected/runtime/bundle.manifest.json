@@ -1,0 +1,8 @@
+{
+  "entries": [
+    "00-bootstrap.js",
+    "10-interactions.js",
+    "20-rendering.js",
+    "30-dom.js"
+  ]
+}

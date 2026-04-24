@@ -3,9 +3,8 @@
   "displayName": "Copilot Annotation",
   "description": "Turn visual annotations into powerful context that GitHub Copilot can understand more effectively.",
   "icon": "media/marketplace-icon.png",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "Pocky",
-  "preview": true,
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -57,8 +56,9 @@
   },
   "scripts": {
     "prepare:assets": "node ./scripts/copy-fontawesome-assets.mjs",
+    "validate:injected": "node ./scripts/validate-injected-bundles.mjs",
     "vscode:prepublish": "npm run prepare:assets && npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "npm run validate:injected && tsc -p ./",
     "package": "npm run prepare:assets && npx @vscode/vsce package",
     "watch": "tsc -watch -p ./"
   },

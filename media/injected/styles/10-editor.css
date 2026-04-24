@@ -1,0 +1,126 @@
+.ca-editor-panel {
+  position: fixed;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100vh - var(--ca-toolbar-height) - 24px);
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: #1f1f1f;
+  color: var(--ca-toolbar-text);
+  box-shadow: 0 16px 34px rgba(7, 13, 25, 0.3);
+  pointer-events: auto;
+  z-index: var(--ca-z-panel);
+}
+
+.ca-editor-panel__section,
+.ca-editor-panel__footer {
+  padding: 10px;
+}
+
+.ca-editor-panel__section {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ca-editor-panel__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ca-editor-panel__footer .ca-button-row {
+  gap: 8px;
+}
+
+.ca-editor-panel__footer .ca-button-row:empty {
+  display: none;
+}
+
+.ca-editor-panel .ca-label {
+  margin-bottom: 0;
+  color: rgba(247, 250, 252, 0.64);
+}
+
+.ca-editor-panel .ca-field,
+.ca-editor-panel .ca-code,
+.ca-editor-panel .ca-preview {
+  border-radius: 6px;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(12, 17, 24, 0.72);
+  color: inherit;
+}
+
+.ca-editor-panel .ca-field {
+  min-height: 76px;
+  padding: 10px 11px;
+}
+
+.ca-editor-panel .ca-code,
+.ca-editor-panel .ca-preview {
+  padding: 10px 11px;
+  color: rgba(247, 250, 252, 0.78);
+}
+
+.ca-editor-panel details.ca-styles {
+  border-radius: 6px;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(12, 17, 24, 0.72);
+}
+
+.ca-editor-panel details.ca-styles summary {
+  padding: 10px 11px;
+  color: rgba(247, 250, 252, 0.8);
+}
+
+.ca-editor-panel details.ca-styles pre {
+  padding: 0 11px 11px;
+  color: rgba(247, 250, 252, 0.74);
+}
+
+.ca-editor-panel .ca-button {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ca-toolbar-text);
+  box-shadow: none;
+}
+
+.ca-editor-panel .ca-button:hover,
+.ca-editor-panel .ca-button:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.ca-editor-panel .ca-button--secondary {
+  background: transparent;
+}
+
+.ca-editor-panel .ca-button--danger {
+  color: #ffb4be;
+  background: rgba(196, 61, 75, 0.12);
+  border-color: rgba(196, 61, 75, 0.36);
+}
+
+.ca-editor-panel .ca-button--danger:hover,
+.ca-editor-panel .ca-button--danger:focus-visible {
+  background: rgba(196, 61, 75, 0.2);
+  border-color: rgba(196, 61, 75, 0.48);
+}
+
+.ca-editor-panel .ca-button:not(.ca-button--secondary):not(.ca-button--danger) {
+  background: linear-gradient(135deg, var(--ca-accent) 0%, var(--ca-accent-strong) 100%);
+  border-color: var(--ca-accent-strong);
+  color: white;
+}
+
+.ca-editor-panel .ca-button:not(.ca-button--secondary):not(.ca-button--danger):hover,
+.ca-editor-panel .ca-button:not(.ca-button--secondary):not(.ca-button--danger):focus-visible {
+  background: linear-gradient(135deg, #368cff 0%, #1e68ee 100%);
+  border-color: #1e68ee;
+}
+
