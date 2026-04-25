@@ -123,13 +123,64 @@
     return {
       selector: createCssPath(element),
       label: describeElement(element),
-      rects: rectsFromElement(element),
+      rects: getDisplayRectsForElement(element),
       styles: captureStyles(element)
     };
   }
 
   function rectsFromElement(element) {
     return clientRectsToPageRects(element.getClientRects());
+  }
+
+  function getDisplayRectsForElement(element) {
+    const ownRects = rectsFromElement(element);
+    if (ownRects.length > 0) {
+      return ownRects;
+    }
+
+    const contentRects = rectsFromElementContents(element);
+    if (contentRects.length > 0) {
+      return contentRects;
+    }
+
+    const descendantRects = getDescendantRects(element);
+    if (descendantRects.length === 0) {
+      return [];
+    }
+
+    return [combineRects(descendantRects)];
+  }
+
+  function rectsFromElementContents(element) {
+    if (!element || !element.ownerDocument || typeof element.ownerDocument.createRange !== 'function') {
+      return [];
+    }
+
+    const range = element.ownerDocument.createRange();
+    try {
+      range.selectNodeContents(element);
+      return clientRectsToPageRects(range.getClientRects());
+    } catch {
+      return [];
+    } finally {
+      if (typeof range.detach === 'function') {
+        range.detach();
+      }
+    }
+  }
+
+  function getDescendantRects(element) {
+    if (!element || !element.querySelectorAll) {
+      return [];
+    }
+
+    return Array.from(element.querySelectorAll('*')).flatMap((descendant) => {
+      if (isAnnotationChrome(descendant)) {
+        return [];
+      }
+
+      return rectsFromElement(descendant);
+    });
   }
 
   function refreshAnnotationGeometries() {
@@ -259,11 +310,12 @@
   }
 
   function firstRectForElement(element) {
-    const rect = element.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) {
+    const rects = getDisplayRectsForElement(element);
+    if (rects.length === 0) {
       return null;
     }
-    return viewportRectToPageRect(rect);
+
+    return combineRects(rects);
   }
 
   function combineRects(rects) {
@@ -396,6 +448,7 @@
   function createCssPath(element) {
     const path = [];
     let current = element;
+    let stoppedAtStableId = false;
     while (
       current
       && current.nodeType === Node.ELEMENT_NODE
@@ -406,6 +459,7 @@
       if (current.id) {
         selector += `#${cssEscape(current.id)}`;
         path.unshift(selector);
+        stoppedAtStableId = true;
         break;
       }
 
@@ -425,9 +479,11 @@
       path.unshift(selector);
       current = current.parentElement;
     }
-    if (path[0] !== 'body') {
+
+    if (!stoppedAtStableId && path[0] !== 'body') {
       path.unshift('body');
     }
+
     return path.join(' > ');
   }
 

@@ -3,7 +3,7 @@
   "displayName": "Copilot Annotation",
   "description": "Turn visual annotations into powerful context that GitHub Copilot can understand more effectively.",
   "icon": "media/marketplace-icon.png",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "publisher": "Pocky",
   "license": "MIT",
   "repository": {
